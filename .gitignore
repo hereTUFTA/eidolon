@@ -1,0 +1,23 @@
+# Rust & Cargo
+/target
+Cargo.lock
+
+# EIDOLON Artifacts
+*.mp4
+*.tar
+*.wav
+decoded_*
+temp_frames/
+temp_decode/
+eidolon_audio/
+
+# OS & Executables
+*.exe
+*.ico
+*.bmp
+ffmpeg.exe
+yt-dlp.exe
+
+# Release Folders
+EIDOLON_Release/
+EIDOLON_Linux_Release/

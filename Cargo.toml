@@ -1,0 +1,26 @@
+[package]
+name = "navi_encoder"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "EIDOLON"
+path = "src/main.rs"
+
+[dependencies]
+aes-gcm = "0.10.3"
+arboard = "3.6.1"
+bitvec = "1.0.1"
+crossterm = "0.29.0"
+dirs = "5.0.1"
+hound = "3.5.1"
+rand = "0.8.5"
+ratatui = "0.30.0"
+reed-solomon-erasure = "6.0.0"
+rfd = "0.17.2"
+sha2 = "0.10.8"
+tar = "0.4.45"
+zstd = "0.13.3"
+
+[build-dependencies]
+winres = "0.1"
