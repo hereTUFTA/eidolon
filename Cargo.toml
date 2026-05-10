@@ -1,6 +1,6 @@
 [package]
 name = "navi_encoder"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 
 [[bin]]
@@ -15,6 +15,7 @@ crossterm = "0.29.0"
 dirs = "5.0.1"
 hound = "3.5.1"
 rand = "0.8.5"
+rayon = "1.10.0"
 ratatui = "0.30.0"
 reed-solomon-erasure = "6.0.0"
 rfd = "0.17.2"

@@ -1,10 +1,12 @@
 use bitvec::prelude::*;
+use rayon::prelude::*;
 use reed_solomon_erasure::galois_8::ReedSolomon;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::mpsc::Sender;
+use std::time::Instant;
 
 use aes_gcm::{
     Aes256Gcm, Key, Nonce,
@@ -51,6 +53,31 @@ pub fn get_tool_path(tool_name: &str) -> Result<String, String> {
         }
     }
     Ok(tool_name.to_string())
+}
+
+fn estimate_frame_count(video: &str, ffmpeg_path: &str) -> Option<usize> {
+    let output = Command::new(ffmpeg_path)
+        .args(["-i", video])
+        .stderr(Stdio::piped())
+        .stdout(Stdio::null())
+        .stdin(Stdio::null())
+        .output()
+        .ok()?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    for line in stderr.lines() {
+        if let Some(pos) = line.find("Duration: ") {
+            let dur_str = &line[pos + 10..];
+            let parts: Vec<&str> = dur_str.split(':').collect();
+            if parts.len() >= 3 {
+                let h: f64 = parts[0].trim().parse().ok()?;
+                let m: f64 = parts[1].trim().parse().ok()?;
+                let s: f64 = parts[2].split(',').next()?.trim().parse().ok()?;
+                let total_secs = h * 3600.0 + m * 60.0 + s;
+                return Some(((total_secs * 6.0) as usize).max(1));
+            }
+        }
+    }
+    None
 }
 
 pub fn aes_encrypt(data: &[u8], password: &str) -> Result<Vec<u8>, String> {
@@ -259,13 +286,21 @@ pub fn encode_process(
     filename: String,
     key: String,
     use_fec: bool,
-    _use_mc: bool,
+    use_mc: bool,
     use_sync: bool,
     use_zstd: bool,
     use_audio: bool,
     hw_accel: u8,
     tx: Sender<JobMsg>,
 ) -> Result<(), String> {
+    let start_time = Instant::now();
+
+    if key.is_empty() {
+        let _ = tx.send(JobMsg::Log(
+            "WARNING: Access key is empty — payload will NOT be encrypted.".into(),
+        ));
+    }
+
     let raw_data = if is_folder {
         let _ = tx.send(JobMsg::Log("Packing folder into TAR archive...".into()));
         pack_folder(&input_path)?
@@ -320,6 +355,7 @@ pub fn encode_process(
         BITS_PER_FRAME
     };
     let frames = (bits.len() + data_bpf - 1) / data_bpf;
+    let total_pipe_frames = frames + 5;
 
     let _ = tx.send(JobMsg::Log("Initializing FFmpeg Pipeline...".into()));
     let mut cmd = Command::new(get_tool_path("ffmpeg")?);
@@ -344,7 +380,7 @@ pub fn encode_process(
     if use_audio {
         fs::create_dir_all(&audio_dir).unwrap();
         let _ = tx.send(JobMsg::Log(
-            "Generating data-driven acoustic track...".into(),
+            "Generating FSK acoustic anti-spam track...".into(),
         ));
         generate_audio_track(&bits, frames, data_bpf, audio_path.to_str().unwrap())?;
         cmd.args([
@@ -384,23 +420,51 @@ pub fn encode_process(
         .take()
         .ok_or_else(|| "Failed to open FFmpeg stdin".to_string())?;
 
-    let _ = tx.send(JobMsg::Log(format!(
-        "Streaming {} frames to FFmpeg on the fly...",
-        frames
-    )));
-    for i in 0..(frames + 5) {
-        let start = i * data_bpf;
-        let end = usize::min(start + data_bpf, bits.len());
-        let frame_bits = if i < frames {
-            &bits[start..end]
-        } else {
-            &bits[0..0]
-        };
-        stdin
-            .write_all(&encode_raw_frame(frame_bits, i as u32, use_sync))
-            .map_err(|e| format!("Pipe broken: {}", e))?;
-        let _ = tx.send(JobMsg::Progress(i as f32 / (frames + 5) as f32 * 0.95));
+    if use_mc {
+        let thread_count = rayon::current_num_threads();
+        let _ = tx.send(JobMsg::Log(format!(
+            "Streaming {} frames to FFmpeg ({} CPU threads)...",
+            frames, thread_count
+        )));
+
+        let batch_size = (thread_count * 4).max(8);
+        for batch_start in (0..total_pipe_frames).step_by(batch_size) {
+            let batch_end = usize::min(batch_start + batch_size, total_pipe_frames);
+
+            let batch: Vec<Vec<u8>> = (batch_start..batch_end)
+                .into_par_iter()
+                .map(|i| {
+                    let start = i * data_bpf;
+                    let end = usize::min(start + data_bpf, bits.len());
+                    let frame_bits = if i < frames { &bits[start..end] } else { &bits[0..0] };
+                    encode_raw_frame(frame_bits, i as u32, use_sync)
+                })
+                .collect();
+
+            for (j, frame) in batch.iter().enumerate() {
+                stdin
+                    .write_all(frame)
+                    .map_err(|e| format!("Pipe broken: {}", e))?;
+                let i = batch_start + j;
+                let _ = tx.send(JobMsg::Progress(i as f32 / total_pipe_frames as f32 * 0.95));
+            }
+        }
+    } else {
+        let _ = tx.send(JobMsg::Log(format!(
+            "Streaming {} frames to FFmpeg (single thread)...",
+            frames
+        )));
+        for i in 0..total_pipe_frames {
+            let start = i * data_bpf;
+            let end = usize::min(start + data_bpf, bits.len());
+            let frame_bits = if i < frames { &bits[start..end] } else { &bits[0..0] };
+            stdin
+                .write_all(&encode_raw_frame(frame_bits, i as u32, use_sync))
+                .map_err(|e| format!("Pipe broken: {}", e))?;
+            let _ = tx.send(JobMsg::Progress(i as f32 / total_pipe_frames as f32 * 0.95));
+        }
     }
+
     drop(stdin);
 
     let status = child.wait().map_err(|e| e.to_string())?;
@@ -410,6 +474,17 @@ pub fn encode_process(
     if use_audio {
         let _ = fs::remove_dir_all(audio_dir);
     }
+
+    let elapsed = start_time.elapsed();
+    if let Ok(meta) = std::fs::metadata(&out_path) {
+        let size_mb = meta.len() as f64 / 1024.0 / 1024.0;
+        let _ = tx.send(JobMsg::Log(format!(
+            "Output: {:.1} MB | Time: {:.1}s",
+            size_mb,
+            elapsed.as_secs_f64()
+        )));
+    }
+
     let _ = tx.send(JobMsg::Progress(1.0));
     Ok(())
 }
@@ -424,10 +499,29 @@ pub fn decode_process(
     hw_accel: u8,
     tx: Sender<JobMsg>,
 ) -> Result<(), String> {
+    let start_time = Instant::now();
+
+    if key.is_empty() {
+        let _ = tx.send(JobMsg::Log(
+            "WARNING: Access key is empty — assuming payload was NOT encrypted.".into(),
+        ));
+    }
+
     let _ = tx.send(JobMsg::Log(
         "Initializing FFmpeg Pipeline for Extraction...".into(),
     ));
-    let mut cmd = Command::new(get_tool_path("ffmpeg")?);
+
+    let ffmpeg_path = get_tool_path("ffmpeg")?;
+
+    let estimated_frames = estimate_frame_count(&video, &ffmpeg_path).unwrap_or(0);
+    if estimated_frames > 0 {
+        let _ = tx.send(JobMsg::Log(format!(
+            "Video probed: ~{} frames to extract.",
+            estimated_frames
+        )));
+    }
+
+    let mut cmd = Command::new(&ffmpeg_path);
     if hw_accel > 0 {
         cmd.args(["-hwaccel", "auto"]);
     }
@@ -458,7 +552,7 @@ pub fn decode_process(
     };
     let mut frames_data = Vec::new();
     let mut frame_buf = vec![0u8; (WIDTH * HEIGHT) as usize];
-    let mut frames_cnt = 0;
+    let mut frames_cnt = 0usize;
 
     let _ = tx.send(JobMsg::Log("Streaming frames into memory...".into()));
     while stdout.read_exact(&mut frame_buf).is_ok() {
@@ -484,9 +578,13 @@ pub fn decode_process(
             frames_data.push((frames_cnt, local));
         }
         frames_cnt += 1;
-        let _ = tx.send(JobMsg::Progress(
-            0.5 - (0.5 / (frames_cnt as f32 * 0.1 + 1.0)),
-        ));
+
+        let progress = if estimated_frames > 0 {
+            (frames_cnt as f32 / estimated_frames as f32 * 0.5).min(0.49)
+        } else {
+            0.49 * (1.0 - 1.0 / (frames_cnt as f32 * 0.005 + 1.0))
+        };
+        let _ = tx.send(JobMsg::Progress(progress));
     }
     let _ = child.wait();
 
@@ -563,6 +661,12 @@ pub fn decode_process(
                 fs::write(&out_name, final_data).map_err(|e| e.to_string())?;
             }
 
+            let elapsed = start_time.elapsed();
+            let _ = tx.send(JobMsg::Log(format!(
+                "Extraction complete. Time: {:.1}s",
+                elapsed.as_secs_f64()
+            )));
+
             let _ = tx.send(JobMsg::Progress(1.0));
             return Ok(());
         }
@@ -601,8 +705,7 @@ pub fn decode_url_process(
         .stderr(Stdio::null())
         .status()
         .map_err(|_| {
-            "yt-dlp.exe not found! Please ensure it is installed in the application directory."
-                .to_string()
+            "yt-dlp not found! Please ensure it is installed or available in PATH.".to_string()
         })?;
 
     if !status.success() {

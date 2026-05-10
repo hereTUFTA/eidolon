@@ -69,10 +69,10 @@ Input File / Directory
 [L.I.N.E. frame encoding → raw grayscale frames]
         │
         ▼
-[FFmpeg muxing → .mp4 output]
+[FFmpeg pipe → .mp4 output]   ← frames streamed in real time, no intermediate files written to disk
 ```
 
-The decoder runs this pipeline in reverse. The input video is never modified — it is streamed frame-by-frame through FFmpeg, decoded in memory, and the original file is reconstructed without writing any intermediate artifacts to disk.
+The decoder runs this pipeline in reverse. The input video is streamed frame-by-frame through FFmpeg, decoded in memory, and the original file is reconstructed without writing any intermediate artifacts to disk.
 
 ---
 
@@ -89,7 +89,7 @@ Encodes a file or directory into a video stream.
 | `Space` | Select a **file** to encode |
 | `F` | Select a **directory** to encode (auto-packed into `.tar`) |
 
-After selecting the input, a save dialog prompts for the output `.mp4` path. Encoding begins immediately. A progress overlay displays until completion.
+After selecting the input, a save dialog prompts for the output `.mp4` path. Encoding begins immediately. A progress overlay displays real-time frame completion. On finish, the system log reports output file size and elapsed time.
 
 ---
 
@@ -114,13 +114,13 @@ Navigate settings with `↑` / `↓` arrow keys. Toggle or modify with `Space` /
 
 | Setting | Description |
 |---------|-------------|
-| **Access Key** | AES-256-GCM symmetric encryption key. The same key must be used for both encoding and decoding. An empty key disables encryption. |
-| **Engine Core** | Video encoding backend. Cycles between `CPU (libx264)`, `NVENC (Nvidia)`, and `AMF (AMD)`. Hardware acceleration bypasses CPU bottlenecks for large payloads. |
-| **Matrix Threading** | Enables Rayon-based multi-core parallelism for pixel matrix generation. Recommended: enabled. |
+| **Access Key** | AES-256-GCM symmetric encryption key. The same key must be used for both encoding and decoding. An empty key disables encryption — a warning will appear in the terminal stream on every operation. |
+| **Engine Core** | Video encoding backend. Cycles between `CPU (libx264)`, `NVENC (Nvidia)`, and `AMF (AMD)`. Hardware acceleration bypasses CPU bottlenecks for large payloads. Works alongside Matrix Threading. |
+| **Matrix Threading** | Enables Rayon-based multi-core parallelism for pixel matrix generation. Frames are generated in parallel batches and streamed to FFmpeg sequentially. Recommended: enabled. |
 | **Parity Injection** | Enables Reed-Solomon FEC. Adds ~50% overhead to the output video size but provides strong resilience against CDN compression artifacts. Recommended for CDN uploads. |
 | **Frame Synchronization** | Embeds a 32-bit deterministic index into each frame. Protects against data corruption from CDN frame drops or reordering. Recommended: enabled. |
 | **Entropy Compression** | Applies Zstandard (level 3) compression before encryption. Reduces payload size and therefore output video length. Recommended: enabled. |
-| **Acoustic Modem Track** | Synthesizes an FSK (Frequency-Shift Keying) audio track derived from the payload data and muxes it into the output video. Does not carry recoverable data. Designed to prevent CDN platforms from flagging silent-video uploads as spam. |
+| **Acoustic Modem Track** | Synthesizes an FSK (Frequency-Shift Keying) audio track and muxes it into the output video. Does not carry recoverable data and has no effect on encode/decode correctness. Designed solely to prevent CDN platforms from flagging silent-video uploads as spam. |
 
 Settings are persisted to `~/.config/eidolon_config.txt` (Linux) or `%APPDATA%\eidolon_config.txt` (Windows) automatically on change.
 
@@ -128,7 +128,7 @@ Settings are persisted to `~/.config/eidolon_config.txt` (Linux) or `%APPDATA%\e
 
 ### `[4] SYSTEM LOGS` — Terminal Diagnostics
 
-Displays the full operation log for the current session. Shows all pipeline steps, progress messages, and error output. The last four log entries are also visible in the status bar at the bottom of every tab.
+Displays the full operation log for the current session. Shows all pipeline steps, progress messages, timing, output file size, and error output. The last four log entries are also visible in the status bar at the bottom of every tab.
 
 ---
 
@@ -136,7 +136,7 @@ Displays the full operation log for the current session. Shows all pipeline step
 
 ### Windows
 
-Download `EIDOLON_Setup_v1.0.0.exe` from the [Releases](https://github.com/hereTUFTA/eidolon/releases) page.
+Download `EIDOLON_Setup_v1.1.0.exe` from the [Releases](https://github.com/hereTUFTA/eidolon/releases) page.
 
 Run the installer. Administrator privileges are **not required** — the application installs into `%LOCALAPPDATA%\Programs\EIDOLON`. `ffmpeg.exe` and `yt-dlp.exe` are bundled and require no separate installation.
 
@@ -144,19 +144,19 @@ Run the installer. Administrator privileges are **not required** — the applica
 
 ### Linux (Arch / Debian / Ubuntu / Fedora)
 
-Download `EIDOLON_Linux_Setup_v1.0.0.zip` from the [Releases](https://github.com/hereTUFTA/eidolon/releases) page and extract it.
+Download `EIDOLON_Linux_Setup_v1.1.0.zip` from the [Releases](https://github.com/hereTUFTA/eidolon/releases) page and extract it.
 
-**Required dependencies** (install via your package manager before running):
+**Required dependency** — install `ffmpeg` via your package manager before running:
 
 ```bash
 # Arch
-sudo pacman -S ffmpeg yt-dlp
+sudo pacman -S ffmpeg
 
 # Debian / Ubuntu
-sudo apt install ffmpeg yt-dlp
+sudo apt install ffmpeg
 
 # Fedora
-sudo dnf install ffmpeg yt-dlp
+sudo dnf install ffmpeg
 ```
 
 **Install:**
@@ -168,6 +168,8 @@ chmod +x install.sh
 ```
 
 The installer deploys the binary to `~/.local/bin/eidolon`, creates a `.desktop` entry for application launchers, and installs the icon. No root access required.
+
+`yt-dlp` is required only for URL-based stream interception. The installer will attempt to fetch the latest release automatically via `curl` or `wget`. If auto-fetch fails, it will print manual installation instructions and continue — EIDOLON works normally for local file encode/decode without it.
 
 **Uninstall:**
 
@@ -202,9 +204,10 @@ The compiled binary is written to `target/release/EIDOLON` (Linux) or `target/re
 
 - **Encryption:** AES-256-GCM with a SHA-256 derived key. Authentication tag validation guarantees payload integrity — corrupted or tampered data will fail decryption.
 - **Key storage:** The access key is stored in plaintext in the config file. Treat it accordingly.
+- **Empty key:** If the Access Key field is left empty, the payload is stored without encryption. Any party with access to the video and the EIDOLON decoder can extract the data. A warning is displayed on every operation when the key is empty.
 - **No backdoor:** There is no master key or recovery mechanism. A lost key means the payload is permanently inaccessible.
 - **CDN threat model:** The CDN host is treated as a fully untrusted, surveilled environment. Security depends entirely on AES-256-GCM and the strength of the user-supplied key.
-- **Audio track:** The FSK acoustic track carries no recoverable data and provides no cryptographic function.
+- **Audio track:** The FSK acoustic track carries no recoverable data and provides no cryptographic function. It is a cosmetic anti-spam measure only and has no effect on encode/decode correctness.
 - **FEC limits:** Reed-Solomon FEC tolerates up to 4 destroyed shards out of 12. Extreme CDN downscaling (e.g., forced 144p) may result in permanent data loss.
 
 Report cryptographic vulnerabilities via a GitHub Issue tagged `[SECURITY]`.
