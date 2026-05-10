@@ -1,6 +1,6 @@
 [Setup]
 AppName=EIDOLON
-AppVersion=1.1.0
+AppVersion=1.0.0
 AppPublisher=TUFTA
 AppCopyright=Copyright (C) 2026 TUFTA
 
@@ -17,7 +17,7 @@ WizardImageFile=C:\EIDOLON_Release\side_image.bmp
 WizardSmallImageFile=C:\EIDOLON_Release\top_logo.bmp
 
 OutputDir=C:\EIDOLON_Release
-OutputBaseFilename=EIDOLON_Setup_v1.1
+OutputBaseFilename=EIDOLON_Setup_v1.0
 Compression=lzma2/ultra64
 SolidCompression=yes
 

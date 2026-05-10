@@ -136,7 +136,7 @@ Displays the full operation log for the current session. Shows all pipeline step
 
 ### Windows
 
-Download `EIDOLON_Setup_v1.1.0.exe` from the [Releases](https://github.com/hereTUFTA/eidolon/releases) page.
+Download `EIDOLON_Setup_v1.1.exe` from the [Releases](https://github.com/hereTUFTA/eidolon/releases) page.
 
 Run the installer. Administrator privileges are **not required** — the application installs into `%LOCALAPPDATA%\Programs\EIDOLON`. `ffmpeg.exe` and `yt-dlp.exe` are bundled and require no separate installation.
 
@@ -144,7 +144,7 @@ Run the installer. Administrator privileges are **not required** — the applica
 
 ### Linux (Arch / Debian / Ubuntu / Fedora)
 
-Download `EIDOLON_Linux_Setup_v1.1.0.zip` from the [Releases](https://github.com/hereTUFTA/eidolon/releases) page and extract it.
+Download `EIDOLON_Linux_Setup_v1.1.zip` from the [Releases](https://github.com/hereTUFTA/eidolon/releases) page and extract it.
 
 **Required dependency** — install `ffmpeg` via your package manager before running:
 
