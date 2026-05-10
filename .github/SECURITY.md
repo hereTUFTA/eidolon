@@ -1,7 +1,7 @@
 # Security Policy // EIDOLON L.I.N.E. Protocol
 
 ## Supported Versions
-Only the latest release (`v1.0.x`) receives security patches.
+Only the latest release (`v1.1.x`) receives security patches.
 
 ## Cryptographic Guarantees
 EIDOLON utilizes `AES-256-GCM` for payload encryption and `Sha256` for key hashing.
